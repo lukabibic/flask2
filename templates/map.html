@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Interactive Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        body, html, #map {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        .hint {
+            position: fixed;
+            top: 80px;
+            left: 10px;
+            padding: 5px;
+            background-color: white;
+            border: 1px solid black;
+            z-index: 9999;
+        }
+        .clear-button button {
+            padding: 5px;
+            margin: 5px;
+            background-color: #f5f5f5;
+            border: none;
+            cursor: pointer;
+        }
+        .calculate-button button {
+            padding: 5px;
+            margin: 5px;
+            background-color: #f5f5f5;
+            border: none;
+            cursor: pointer;
+        }
+
+
+    </style>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="hint" id="hint">Click points on the map.</div>
+    <div id="matrixModal" style="display: none; position: fixed; top: 10%; left: 20%; width: 60%; height: 70%; background-color: white; z-index: 9999; border: 1px solid black; padding: 20px; overflow: auto;">
+        <h3>Le/Lt Matrix</h3>
+        <img id="matrixImage" src="" alt="Le/Lt Matrix" style="width: 100%; height: auto;">
+        <br><br>
+        <button onclick="hideMatrix()">Close</button>
+    </div>
+    <script>
+
+        var maxPoints = 5;
+        // Update the hint text using the maxPoints variable
+        document.getElementById('hint').textContent = 'Click ' + maxPoints + ' points on the map.';
+
+        function clearMarkers() {
+            // Clear markers and paths from the map
+            map.eachLayer(function(layer) {
+                if (layer instanceof L.Marker || layer instanceof L.Polyline) {
+                    map.removeLayer(layer);
+                }
+            });
+
+            points = [];
+            document.getElementById('hint').textContent = `Click ${maxPoints} points on the map.`;
+            isCalculating = false;
+            le_lt_matrix = [];
+        }
+
+        function calculate() {
+            document.getElementById('hint').textContent = 'Calculating matrix...';
+            $.post({
+                    url: '/calculate_le_lt_matrix',
+                    data: JSON.stringify({points: points}),
+                    contentType: 'application/json',
+                    success: function(data) {
+
+                        // Handle the paths
+                        for (var i = 0; i < data.paths.length; i++) {
+                            var le_lt = data.matrix[data.paths[i].start][data.paths[i].end];
+                            var color = getColor(le_lt);
+                            var roadPath = L.polyline(data.paths[i].path, {color: color}).addTo(map);
+                            var airDistance = data.paths[i].air_distance;
+                            var roadDistance = data.paths[i].road_distance;
+                            roadPath.bindPopup(
+                                "Le/Lt: " + le_lt.toString() +
+                                "<br>Air Distance: " + airDistance.toFixed(2) + " meters" +
+                                "<br>Road Distance: " + roadDistance.toFixed(2) + " meters"
+                            );
+
+                            // Store the path in the roadPaths array
+                            roadPaths.push(roadPath);
+
+                            // Event listener for the path click
+                            roadPath.on('click', function() {
+                                // Hide all paths
+                                for (var path of roadPaths) {
+                                    path.setStyle({opacity: 0, fillOpacity: 0});
+                                }
+                                // Show the clicked path
+                                this.setStyle({opacity: 1, fillOpacity: 0.5});
+                            });
+
+                            (function(currentColor) {
+                                roadPath.on('mouseover', function (e) {
+                                    this.setStyle({
+                                        color: '#FFFF00',  // Highlight color yellow
+                                        weight: 7  // Increase the line width on hover
+                                    });
+                                });
+
+                                roadPath.on('mouseout', function (e) {
+                                    this.setStyle({
+                                        color: currentColor,  // Original color
+                                        weight: 5  // Original line width
+                                    });
+                                });
+                            })(color);
+                        }
+                        console.log(data.matrix);
+                        le_lt_matrix = data.matrix;
+                        document.getElementById('hint').textContent = 'Matrix calculated. Click Clear to select new points.';
+                        isCalculating = false;
+                    },
+                    error: function(jqXHR, textStatus, errorThrown) {
+                        console.log("AJAX Error:");
+                        console.log("Status: " + jqXHR.status + " " + errorThrown);
+                        console.log("Response text:", jqXHR.responseText);
+                        console.log("Error type:", textStatus);
+                        document.getElementById('hint').textContent = 'Error calculating matrix. Try again.';
+                        isCalculating = false;
+                    }
+                });
+        }
+
+        function returnPaths() {
+            // Restore all paths
+            for (var path of roadPaths) {
+                path.setStyle({opacity: 1, fillOpacity: 0.5});
+            }
+        }
+
+        function getColor(value) {
+            return value < 0.25 ? 'red' :
+                   value < 0.5 ? 'orange' :
+                   value < 0.75 ? 'green' :
+                   'blue';
+        }
+
+
+        var le_lt_matrix = [];
+
+        function showMatrix() {
+            // Set the source of the img tag to the saved heatmap image
+            document.getElementById('matrixImage').src = '/get_matrix_image?' + new Date().getTime();
+
+            // Display the modal
+            document.getElementById('matrixModal').style.display = 'block';
+        }
+
+        function hideMatrix() {
+            document.getElementById('matrixModal').style.display = 'none';
+        }
+
+
+        var map = L.map('map').setView([45.3271, 14.4422], 13);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+        }).addTo(map);
+
+        var roadPath = L.polyline([], {color: 'red'}).addTo(map);
+        var airPath = L.polyline([], {color: 'blue'}).addTo(map);
+
+
+        var points = [];
+        var markersArray = [];
+        var isCalculating = false;
+        var roadPaths = [];
+
+        map.on('click', function(e) {
+            if (isCalculating || points.length >= maxPoints) {
+                if (points.length >= maxPoints) {
+                    alert('You have selected the maximum number of points. Please click "Clear markers" to start over.');
+                }
+                return;  // Don't add a new marker if calculation is ongoing or maxPoints are already selected
+            }
+
+
+            // Add new point
+            points.push([e.latlng.lat, e.latlng.lng]);
+            var markerOrder = points.length - 1;
+            var marker = L.marker(e.latlng);
+            marker.bindPopup("Point #" + markerOrder.toString());
+            marker.addTo(map);
+            markersArray.push(marker);
+
+            if (points.length < maxPoints) {
+                document.getElementById('hint').textContent = `Selected ${points.length} point(s). Select ${maxPoints - points.length} more.`;
+            } else {
+                document.getElementById('hint').textContent = 'Calculating matrix...';
+                isCalculating = true;
+            }
+
+            // Draw air paths and request road paths for each new point vs previously selected points
+            for (var i = 0; i < points.length - 1; i++) {
+                var airPath = L.polyline([points[i], points[points.length - 1]], {color: 'blue'}).addTo(map);
+            }
+
+            if (points.length === maxPoints) {
+                $.post({
+                    url: '/calculate_le_lt_matrix',
+                    data: JSON.stringify({points: points}),
+                    contentType: 'application/json',
+                    success: function(data) {
+
+                        // Handle the paths
+                        for (var i = 0; i < data.paths.length; i++) {
+                            var le_lt = data.matrix[data.paths[i].start][data.paths[i].end];
+                            var color = getColor(le_lt);
+                            var roadPath = L.polyline(data.paths[i].path, {color: color}).addTo(map);
+                            var airDistance = data.paths[i].air_distance;
+                            var roadDistance = data.paths[i].road_distance;
+                            roadPath.bindPopup(
+                                "Le/Lt: " + le_lt.toString() +
+                                "<br>Air Distance: " + airDistance.toFixed(2) + " meters" +
+                                "<br>Road Distance: " + roadDistance.toFixed(2) + " meters"
+                            );
+
+                            // Store the path in the roadPaths array
+                            roadPaths.push(roadPath);
+
+                            // Event listener for the path click
+                            roadPath.on('click', function() {
+                                // Hide all paths
+                                for (var path of roadPaths) {
+                                    path.setStyle({opacity: 0, fillOpacity: 0});
+                                }
+                                // Show the clicked path
+                                this.setStyle({opacity: 1, fillOpacity: 0.5});
+                            });
+
+                            (function(currentColor) {
+                                roadPath.on('mouseover', function (e) {
+                                    this.setStyle({
+                                        color: '#FFFF00',  // Highlight color yellow
+                                        weight: 7  // Increase the line width on hover
+                                    });
+                                });
+
+                                roadPath.on('mouseout', function (e) {
+                                    this.setStyle({
+                                        color: currentColor,  // Original color
+                                        weight: 5  // Original line width
+                                    });
+                                });
+                            })(color);
+                        }
+                        console.log(data.matrix);
+                        le_lt_matrix = data.matrix;
+                        document.getElementById('hint').textContent = 'Matrix calculated. Click Clear to select new points.';
+                        isCalculating = false;
+                    },
+                    error: function(jqXHR, textStatus, errorThrown) {
+                        console.log("AJAX Error:");
+                        console.log("Status: " + jqXHR.status + " " + errorThrown);
+                        console.log("Response text:", jqXHR.responseText);
+                        console.log("Error type:", textStatus);
+                        document.getElementById('hint').textContent = 'Error calculating matrix. Try again.';
+                        isCalculating = false;
+                    }
+                });
+            }
+        });
+
+        // Add a button for clearing the markers
+        var clearButton = L.control({position: 'topright'});
+        clearButton.onAdd = function (map) {
+            var div = L.DomUtil.create('div', 'clear-button');
+            div.innerHTML = '<button onclick="clearMarkers()">Clear markers</button>';
+
+            // Prevent the event from propagating to the map
+            L.DomEvent.on(div, 'click', L.DomEvent.stopPropagation);
+
+            return div;
+        };
+        clearButton.addTo(map);
+
+        // Add a button for calculating
+        var calculateButton = L.control({position: 'bottomleft'});
+        calculateButton.onAdd = function (map) {
+            var div = L.DomUtil.create('div', 'calculate-button');
+            div.innerHTML = '<button onclick="calculate()">Calculate Le/Lt matrix</button>';
+
+            // Prevent the event from propagating to the map
+            L.DomEvent.on(div, 'click', L.DomEvent.stopPropagation);
+
+            return div;
+        };
+        calculateButton.addTo(map);
+
+        // Add a button for returning other paths to map
+        var returnPathsButton = L.control({position: 'bottomright'});
+        returnPathsButton.onAdd = function (map) {
+            var div = L.DomUtil.create('div', 'returnpaths-button');
+            div.innerHTML = '<button onclick="returnPaths()">Show all paths</button>';
+
+            // Prevent the event from propagating to the map
+            L.DomEvent.on(div, 'click', L.DomEvent.stopPropagation);
+
+            return div;
+        };
+        returnPathsButton.addTo(map);
+
+        // Add a button for displaying the le_lt matrix
+        var showMatrixButton = L.control({position: 'bottomleft'});
+        showMatrixButton.onAdd = function (map) {
+            var div = L.DomUtil.create('div', 'show-matrix-button');
+            div.innerHTML = '<button onclick="showMatrix()">Show Le/Lt Matrix</button>';
+
+            // Prevent the event from propagating to the map
+            L.DomEvent.on(div, 'click', L.DomEvent.stopPropagation);
+
+            return div;
+        };
+        showMatrixButton.addTo(map);
+
+    </script>
+</body>
+</html>
